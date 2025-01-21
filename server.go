@@ -5,6 +5,7 @@ import (
 	"io"
 	"net"
 	"sync"
+	"time"
 )
 
 const (
@@ -56,8 +57,11 @@ func (this *Server) BroadCast(user *User, msg string) {
 func (this *Server) Handler(conn net.Conn) {
 
 	user := NewUser(conn, this)
-
 	user.Online()
+
+	// 监听用户是否活跃的 channel
+	isLive := make(chan bool)
+	defer close(isLive)
 
 	// 接受客户端发送的消息
 	go func() {
@@ -74,14 +78,28 @@ func (this *Server) Handler(conn net.Conn) {
 			}
 			// 提取用户消息（去掉\n）
 			msg := string(buf[:n-1])
-
 			// 处理消息
 			user.DoMessage(msg)
+			// 用户活跃
+			isLive <- true
 		}
 	}()
 
-	// 阻塞等待用户退出
-	select {}
+	// 当前 handler 阻塞等待用户退出
+	for {
+		select {
+		// 用户活跃，重置定时器
+		case <- isLive:
+		// 10s 后超时,踢出用户
+		case <- time.After(time.Second * 1000):
+			user.SendMsg("超时：你已被踢出")
+			user.Offline()
+			close(user.C)
+			conn.Close()
+			return
+		}
+	}
+
 }
 
 // Start 启动服务器
